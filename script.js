@@ -1,10 +1,11 @@
 'use strict';
 /* ================= STATE & STORAGE ================= */
 const KEY = 'socials.v1';
+const APP_VERSION = '1.1';
 // Baseline answer -> weekly capacity in load points (= 100%). Adjustable later from history.
 const CAPACITY = { veryLight: 12, light: 16, balanced: 20, busy: 26, veryBusy: 32 };
 const DEMANDING = 4; // a day with >= 4 load points counts as "demanding"
-const state = { settings: { resetDay: 1, baseline: 'balanced', onboardingCompleted: false }, events: [] };
+const state = { settings: { resetDay: 1, baseline: 'balanced', theme: 'auto', onboardingCompleted: false }, events: [] };
 const ui = { view: 'home', weekStart: null, month: new Date(), selected: null, ob: 0, draft: 3 };
 const $ = (s, r = document) => r.querySelector(s);
 const $$ = (s, r = document) => [...r.querySelectorAll(s)];
@@ -12,7 +13,32 @@ const LEVELS = [null,
   { n: 'Very easy', d: 'Light and low-pressure.' }, { n: 'Easy', d: 'Manageable, with a little effort.' },
   { n: 'Moderate', d: 'This will take some noticeable energy.' }, { n: 'High', d: 'This might take a lot out of you.' },
   { n: 'Very high', d: 'You may want real recovery time afterward.' }];
-const CATS = { social: '💬', party: '🎉', dinner: '🍽️', work: '💼', family: '🏠', outing: '🌳' };
+const CATS = { social: 'social', party: 'sparkles', dinner: 'dinner', work: 'work', family: 'heart', outing: 'sun' }; // category -> icon name
+const ICON_PATHS = {
+  home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6H9v6H4a1 1 0 0 1-1-1z"/>',
+  calendar: '<rect x="3" y="4" width="18" height="18" rx="2"/><path d="M16 2v4M8 2v4M3 10h18"/>',
+  battery: '<rect x="2" y="7" width="18" height="10" rx="2"/><path d="M22 11v2M6 11v2M10 11v2"/>',
+  settings: '<path d="M4 6h10M18 6h2M4 12h2M10 12h10M4 18h12"/><circle cx="16" cy="6" r="2"/><circle cx="8" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
+  social: '<path d="M21 12a8 8 0 0 1-11.7 7L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
+  sparkles: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 16v4M17 18h4"/>',
+  dinner: '<path d="M7 3v8a2 2 0 0 0 2 2v8M11 3v8a2 2 0 0 1-2 2M17 21V3c-2 1-3 4-3 8h3"/>',
+  work: '<rect x="3" y="7" width="18" height="13" rx="2"/><path d="M9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2M3 13h18"/>',
+  heart: '<path d="M12 20s-7-4.4-7-10a4 4 0 0 1 7-2.5A4 4 0 0 1 19 10c0 5.6-7 10-7 10z"/>',
+  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
+  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
+  monitor: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8M12 16v4"/>',
+  bulb: '<path d="M9 18h6M10 21h4M12 3a6 6 0 0 0-4 10.5c.8.8 1 1.5 1 2.5h6c0-1 .2-1.7 1-2.5A6 6 0 0 0 12 3z"/>',
+  check: '<path d="M20 6 9 17l-5-5"/>',
+  left: '<path d="m15 18-6-6 6-6"/>', right: '<path d="m9 18 6-6-6-6"/>'
+};
+const icon = (n, s = 20) => `<svg class="i" width="${s}" height="${s}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON_PATHS[n] || ''}</svg>`;
+const THEMES = { auto: ['Automatic', 'monitor'], dark: ['Dark mode', 'moon'], light: ['Light mode', 'sun'] };
+const themeMq = matchMedia('(prefers-color-scheme:dark)');
+function applyTheme() { // 'auto' follows the system via CSS; we also sync the browser bar colour
+  const t = state.settings.theme, dark = t === 'dark' || (t === 'auto' && themeMq.matches);
+  document.documentElement.dataset.theme = t;
+  $('meta[name=theme-color]').content = dark ? '#15171c' : '#f6f4ef';
+}
 const WEEKDAYS = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
 const BASELINES = { veryLight: 'Very light', light: 'Light', balanced: 'Balanced', busy: 'Busy', veryBusy: 'Very busy' };
 
@@ -25,6 +51,7 @@ const Store = {
         state.events = s.events.filter(isValidEvent);
       }
     } catch (e) { console.warn('Stored data unreadable, starting fresh'); }
+    if (!(state.settings.theme in { auto: 1, dark: 1, light: 1 })) state.settings.theme = 'auto';
     if (!(state.settings.baseline in CAPACITY)) state.settings.baseline = 'balanced';
     const rd = Number(state.settings.resetDay); state.settings.resetDay = rd >= 0 && rd <= 6 ? rd : 1;
   },
@@ -103,10 +130,20 @@ function eventFeedback(e) {
 /* ================= RENDERING: SHARED PIECES ================= */
 const stars = n => '★'.repeat(n) + '☆'.repeat(5 - n);
 const dur = e => { const h = hoursOf(e); return h % 1 ? `${round1(h)}h` : `${h}h`; };
-const eventCard = e => `<button class="ev b${e.battery}" data-ev="${e.id}" aria-label="${esc(e.title)}, battery ${e.battery} of 5. Open details">
-  <span class="ic" aria-hidden="true">${CATS[e.category] || '💬'}</span>
-  <span class="ev-m"><b>${e.completed ? '✓ ' : ''}${esc(e.title)}</b><small>${dayName(e.date).slice(0, 3)} ${shortDate(parse(e.date))} · ${fmtTime(e.startTime)}–${fmtTime(e.endTime)} · ${dur(e)}</small></span>
-  <span class="stars" aria-hidden="true">${stars(e.battery)}<i>${e.battery}/5 · ${LEVELS[e.battery].n}</i></span></button>`;
+const pips = n => `<span class="pips" aria-hidden="true">${[1, 2, 3, 4, 5].map(k => `<i class="${k <= n ? 'on' : ''}"></i>`).join('')}</span>`;
+const evLabel = e => `${esc(e.title)}, battery ${e.battery} of 5. Open details`;
+const evTitle = e => `${e.completed ? icon('check', 14) + ' ' : ''}${esc(e.title)}`;
+const evMeta = e => `${icon(CATS[e.category] || 'social', 14)} ${fmtTime(e.startTime)}–${fmtTime(e.endTime)} · ${dur(e)}`;
+// Upcoming (Home): date tile + details + battery meter
+const eventCard = e => { const d = parse(e.date); return `<button class="ev b${e.battery}" data-ev="${e.id}" aria-label="${evLabel(e)}">
+  <span class="dt"><small>${d.toLocaleDateString(undefined, { weekday: 'short' })}</small><b>${d.getDate()}</b><small>${d.toLocaleDateString(undefined, { month: 'short' })}</small></span>
+  <span class="ev-m"><b>${evTitle(e)}</b><small>${evMeta(e)}</small></span>
+  <span class="bat">${pips(e.battery)}<i>${e.battery}/5 · ${LEVELS[e.battery].n}</i></span></button>`; };
+// Calendar day list: timeline-style card with time column
+const dayEventCard = e => `<button class="cev b${e.battery}" data-ev="${e.id}" aria-label="${evLabel(e)}">
+  <span class="tm"><b>${fmtTime(e.startTime)}</b><small>${fmtTime(e.endTime)}</small></span><span class="rail"></span>
+  <span class="ev-m"><b>${evTitle(e)}</b><small>${icon(CATS[e.category] || 'social', 14)} ${dur(e)}${e.notes ? ' · ' + esc(e.notes) : ''}</small></span>
+  <span class="bat">${pips(e.battery)}<i>${e.battery}/5</i></span></button>`;
 const emptyState = () => `<div class="empty card"><h3>Your week is wide open.</h3><p>Add your first event and Socials will start learning how your week feels.</p><button class="btn" data-add>Add your first event</button></div>`;
 
 /* ================= VIEWS ================= */
@@ -119,7 +156,7 @@ function viewHome() {
    <button class="card hero" data-go="battery" aria-label="This week ${ws.pct} percent. Open battery details"><small>THIS WEEK</small>
     <div class="big"><span data-count="${ws.pct}">0</span>%</div><div class="bar"><i class="${fillClass(ws.pct)}" data-w="${Math.min(100, ws.pct)}"></i></div>
     <strong>${levelLabel(ws.pct)}</strong><p>${n ? `You have ${n} social event${n > 1 ? 's' : ''} coming up.` : 'Nothing else planned this week.'}</p></button>
-   <section class="card rec" style="margin-top:14px"><small>💡 ${esc(r.title.toUpperCase())}</small><p>${esc(r.text)}</p></section></div>
+   <section class="card rec" style="margin-top:14px"><small>${icon('bulb', 16)} ${esc(r.title.toUpperCase())}</small><p>${esc(r.text)}</p></section></div>
   <section class="up"><h2>Upcoming</h2>${up.length ? up.map(eventCard).join('') : emptyState()}</section></div></div>`;
 }
 
@@ -129,13 +166,14 @@ function viewCalendar() {
   let cells = WEEKDAYS.map(d => `<div class="dw" aria-hidden="true">${d[0]}</div>`).join('') + '<div class="day off"></div>'.repeat(first.getDay());
   for (let d = 1; d <= new Date(y, mo + 1, 0).getDate(); d++) {
     const s = iso(new Date(y, mo, d)), load = dayLoad(s), lv = dayLevel(load), cnt = eventsOn(s).length;
-    cells += `<button class="day l${lv}${s === ui.selected ? ' sel' : ''}${s === t ? ' today' : ''}" data-day="${s}" aria-label="${s}, ${cnt} events, social level ${lv} of 5" aria-pressed="${s === ui.selected}">${d}<small>${lv ? lv + '/5' : ''}</small></button>`;
+    cells += `<button class="day l${lv}${s === ui.selected ? ' sel' : ''}${s === t ? ' today' : ''}" data-day="${s}" aria-label="${s}, ${cnt} events, social level ${lv} of 5" aria-pressed="${s === ui.selected}">${d}<small aria-hidden="true">${lv || ''}</small></button>`;
   }
   const evs = eventsOn(ui.selected);
-  return `<div class="view-in"><div class="cal-h"><button data-month="-1" aria-label="Previous month">‹</button><h1 style="font-size:1.4rem">${m.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h1><button data-month="1" aria-label="Next month">›</button></div>
+  return `<div class="view-in"><div class="cal-h"><button data-month="-1" aria-label="Previous month">${icon('left')}</button><h1 style="font-size:1.4rem">${m.toLocaleDateString(undefined, { month: 'long', year: 'numeric' })}</h1><button data-month="1" aria-label="Next month">${icon('right')}</button></div>
   <div class="cal card" role="group">${cells}</div>
+  <p class="legend">Number under a date = that day's social level (1–5).</p>
   <h2>${dayName(ui.selected)}, ${shortDate(parse(ui.selected))}</h2>
-  ${evs.length ? evs.map(eventCard).join('') : `<div class="empty card"><p>Nothing planned this day.</p><button class="btn ghost" data-add="${ui.selected}">Add an event</button></div>`}</div>`;
+  ${evs.length ? evs.map(dayEventCard).join('') : `<div class="empty card"><p>Nothing planned this day.</p><button class="btn ghost" data-add="${ui.selected}">Add an event</button></div>`}</div>`;
 }
 
 function viewBattery() {
@@ -158,17 +196,18 @@ function viewBattery() {
 function viewSettings() {
   const s = state.settings;
   return `<div class="view-in"><header class="hd"><h1>Settings</h1><p>Your preferences stay on this device.</p></header><div class="card">
+  <label id="s-thl">Appearance</label><div class="chips" role="radiogroup" aria-labelledby="s-thl">${Object.entries(THEMES).map(([k, [n, ic]]) => `<button class="chip ${k === s.theme ? 'on' : ''}" role="radio" aria-checked="${k === s.theme}" data-theme-set="${k}">${icon(ic, 16)} ${n}</button>`).join('')}</div>
   <label for="s-reset">Social Battery resets on</label><select id="s-reset">${WEEKDAYS.map((d, i) => `<option value="${i}" ${i === s.resetDay ? 'selected' : ''}>${d}</option>`).join('')}</select>
   <label for="s-base">A typical social week feels</label><select id="s-base">${Object.entries(BASELINES).map(([k, v]) => `<option value="${k}" ${k === s.baseline ? 'selected' : ''}>${v} (${CAPACITY[k]} pts = 100%)</option>`).join('')}</select>
   <p style="color:var(--mute);font-size:.9rem">The percentage is an app-generated estimate, not a medical measurement. Ratings are yours.</p>
-  <div class="acts"><button class="btn ghost" data-act="replay">Replay intro</button><button class="btn danger" data-act="wipe">Delete all data</button></div></div></div>`;
+  <div class="acts"><button class="btn ghost" data-act="replay">Replay intro</button><button class="btn danger" data-act="wipe">Delete all data</button></div></div>
+  <p class="ver">Socials · Version ${APP_VERSION}</p></div>`;
 }
 
 /* ================= NAVIGATION & RENDER LOOP ================= */
 const VIEWS = { home: viewHome, calendar: viewCalendar, battery: viewBattery, settings: viewSettings };
 function render() {
   $('#view').innerHTML = VIEWS[ui.view]();
-  $$('#nav [data-go]').forEach(b => b.toggleAttribute('aria-current', b.dataset.go === ui.view) || b.removeAttribute('aria-current'));
   $$('#nav [data-go]').forEach(b => b.dataset.go === ui.view ? b.setAttribute('aria-current', 'page') : b.removeAttribute('aria-current'));
   $('#fab').hidden = ui.view === 'settings';
   requestAnimationFrame(() => requestAnimationFrame(() => $$('[data-w]').forEach(el => el.style.width = el.dataset.w + '%')));
@@ -195,7 +234,7 @@ function openEvent(id, presetDate) {
   <div class="two"><div><label for="f-start">From</label><input id="f-start" type="time" value="${e.startTime}"></div><div><label for="f-end">To</label><input id="f-end" type="time" value="${e.endTime}"></div></div>
   <label id="f-bl">How much social energy will this take?</label><div class="pick b${e.battery}" id="pick" role="radiogroup" aria-labelledby="f-bl">${[1, 2, 3, 4, 5].map(n => `<button type="button" role="radio" aria-checked="${n === e.battery}" aria-label="${n} of 5, ${LEVELS[n].n}" data-b="${n}" class="${n <= e.battery ? 'on' : ''}">★</button>`).join('')}</div>
   <div id="lvl"></div>
-  <label for="f-cat">Type</label><select id="f-cat">${Object.entries(CATS).map(([k, v]) => `<option value="${k}" ${k === e.category ? 'selected' : ''}>${v} ${k[0].toUpperCase() + k.slice(1)}</option>`).join('')}</select>
+  <label for="f-cat">Type</label><select id="f-cat">${Object.entries(CATS).map(([k, v]) => `<option value="${k}" ${k === e.category ? 'selected' : ''}>${k[0].toUpperCase() + k.slice(1)}</option>`).join('')}</select>
   <label for="f-notes">Notes</label><textarea id="f-notes" rows="2" placeholder="Anything you want to remember?">${esc(e.notes)}</textarea>
   ${ex ? `<label><input type="checkbox" id="f-done" style="width:auto;min-height:0" ${e.completed ? 'checked' : ''}> Mark as completed</label>` : ''}
   <div class="fb" id="fb" aria-live="polite"></div><div class="err" id="err" role="alert"></div>
@@ -222,11 +261,11 @@ function openEvent(id, presetDate) {
 function renderOnboarding() {
   const o = $('#onb'), s = state.settings, n = 5, i = ui.ob;
   const slides = [
-    `<div class="emoji">🔋</div><h1>Socials</h1><h2 style="margin:0">Your social energy, at a glance.</h2><p>Log the events you're attending, rate how much energy they take, and see how demanding your week really is.</p>`,
+    `<div class="emoji">${icon('battery', 56)}</div><h1>Socials</h1><h2 style="margin:0">Your social energy, at a glance.</h2><p>Log the events you're attending, rate how much energy they take, and see how demanding your week really is.</p>`,
     `<h1>How it works</h1><p>Every event takes some amount of social energy.</p><div class="scale">${[1, 2, 3, 4, 5].map(k => `<div class="b${k}"><span class="stars">${stars(k)}</span><span>${k}/5 · ${LEVELS[k].n}</span></div>`).join('')}</div><p>Longer events count for more. Ratings are yours, never a diagnosis.</p>`,
     `<h1>Your reset day</h1><p>When should your Social Battery reset?</p><div class="chips" role="radiogroup">${WEEKDAYS.map((d, k) => `<button class="chip ${k === s.resetDay ? 'on' : ''}" role="radio" aria-checked="${k === s.resetDay}" data-reset="${k}">${d}</button>`).join('')}</div><p>This decides how Socials groups your weeks.</p>`,
     `<h1>Your baseline</h1><p>How busy does a typical social week feel to you?</p><div class="chips" role="radiogroup">${Object.entries(BASELINES).map(([k, v]) => `<button class="chip ${k === s.baseline ? 'on' : ''}" role="radio" aria-checked="${k === s.baseline}" data-base="${k}">${v}</button>`).join('')}</div><p>Optional. It sets your starting weekly capacity.</p>`,
-    `<div class="emoji">✨</div><h1>You're all set.</h1><div class="card"><p><b>Reset day:</b> ${WEEKDAYS[s.resetDay]}<br><b>Weekly baseline:</b> ${BASELINES[s.baseline]} (${capacity()} points = 100%)</p></div><p>Each event adds load based on its rating and length. Your battery percentage is a friendly estimate you can always adjust in Settings.</p>`];
+    `<div class="emoji">${icon('sparkles', 56)}</div><h1>You're all set.</h1><div class="card"><p><b>Reset day:</b> ${WEEKDAYS[s.resetDay]}<br><b>Weekly baseline:</b> ${BASELINES[s.baseline]} (${capacity()} points = 100%)</p></div><p>Each event adds load based on its rating and length. Your battery percentage is a friendly estimate you can always adjust in Settings.</p>`];
   o.innerHTML = `<div class="dots" aria-label="Step ${i + 1} of ${n}">${slides.map((_, k) => `<i class="${k <= i ? 'on' : ''}"></i>`).join('')}</div><div class="slide" id="slide">${slides[i]}</div>
    <div class="acts">${i ? '<button class="btn ghost" data-ob="-1">Back</button>' : ''}<button class="btn" data-ob="1">${i === n - 1 ? 'Start using Socials' : i === 0 ? 'Get started' : 'Next'}</button></div>`;
   o.hidden = false;
@@ -235,7 +274,7 @@ function finishOnboarding() { state.settings.onboardingCompleted = true; Store.s
 
 /* ================= EVENTS (DELEGATED) ================= */
 document.addEventListener('click', e => {
-  const t = e.target.closest('[data-go],[data-ev],[data-add],[data-week],[data-day],[data-month],[data-act],[data-reset],[data-base],[data-ob]');
+  const t = e.target.closest('[data-go],[data-ev],[data-add],[data-week],[data-day],[data-month],[data-act],[data-reset],[data-base],[data-ob],[data-theme-set]');
   if (!t) return; const d = t.dataset;
   if ('go' in d) go(d.go);
   else if ('ev' in d) openEvent(d.ev);
@@ -243,6 +282,7 @@ document.addEventListener('click', e => {
   else if ('week' in d) { ui.weekStart = parse(d.week); render(); scrollTo({ top: 0, behavior: 'smooth' }); }
   else if ('day' in d) { ui.selected = d.day; render(); }
   else if ('month' in d) { ui.month = new Date(ui.month.getFullYear(), ui.month.getMonth() + +d.month, 1); render(); }
+  else if ('themeSet' in d) { state.settings.theme = d.themeSet; Store.save(); applyTheme(); render(); }
   else if ('reset' in d) { state.settings.resetDay = +d.reset; renderOnboarding(); }
   else if ('base' in d) { state.settings.baseline = d.base; renderOnboarding(); }
   else if ('ob' in d) { ui.ob += +d.ob; ui.ob >= 5 ? finishOnboarding() : renderOnboarding(); }
@@ -265,6 +305,8 @@ function initPWA() {
 }
 
 /* ================= INIT ================= */
-Store.load();
+Store.load(); applyTheme(); themeMq.addEventListener('change', applyTheme);
+$$('#nav [data-go]').forEach(b => b.querySelector('span').innerHTML = icon(b.dataset.go));
+$('#brand-i').innerHTML = icon('battery', 22);
 if (!state.settings.onboardingCompleted) renderOnboarding();
 render(); initPWA();
